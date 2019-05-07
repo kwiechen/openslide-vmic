@@ -38,6 +38,7 @@
  */
 
 #define ppdebug(...) fprintf(stderr,__VA_ARGS__)
+//#define ppdebug(...) if (true) {}
 
 #define SUPPORTS_GTIF 1
 
@@ -903,7 +904,7 @@ static void vmic_convert_xml_tree_to_properties(xmlNode *node,
         tc++;
         ppdebug("trimming '%02x', new length=%i\n", c, strlen(tc));
       }    
-      int e=strlen(tc);
+      int e = strlen((char*)tc);
       while (e>0) { 
         c=tc[--e]; 
         if (!trimspace(c)) break; 
@@ -1193,7 +1194,7 @@ static bool precipoint_vmic_open( openslide_t *osr, const char *filename,
 
   //g_debug("call to vmic_try_init\n");
   success = vmic_try_init(filename, &inner_index, &inner_size, err);
-  if (success < 0) {
+  if (!success) {
     return false;
   }
   struct vmicinfo *vmic = g_new0(struct vmicinfo, 1);
@@ -1385,6 +1386,7 @@ static bool gtif_decode_tile(struct gtif_level *l,
 
   // check for missing tile
   int64_t tile_no = tile_row * tiffl->tiles_across + tile_col;
+  
   if (g_hash_table_lookup_extended(l->missing_tiles, &tile_no, NULL, NULL)) {
     //g_debug("missing tile in level %p: (%"PRId64", %"PRId64")", (void *) l, tile_col, tile_row);
     return render_missing_tile(l, tiff, dest,
@@ -1781,16 +1783,33 @@ error:
   return NULL;
 }
 
+/* case insensitive comparision for hash table
+ * Returns: %TRUE if the two keys match
+ */
+static gboolean g_str_equal_nocase (gconstpointer v1, gconstpointer v2) {
+  return g_ascii_strcasecmp (v1, v2) == 0;
+}
 
-static void gtif_add_properties(openslide_t *osr, GHashTable *hash_props) {
-  if (hash_props == NULL) {
+// case insensitive hash
+static guint g_str_hash_nocase (gconstpointer v) {
+  const signed char *p;
+  guint32 h = 5381;
+
+  for (p = v; *p != '\0'; p++)
+    h = (h << 5) + h + g_ascii_tolower(*p);
+
+  return h;
+}
+
+static void gtif_add_properties(openslide_t *osr, GHashTable *j_props) {
+  if (j_props == NULL) {
     return;
   }
 
   GHashTableIter iter;
   gpointer key, value;
 
-  g_hash_table_iter_init (&iter, hash_props);
+  g_hash_table_iter_init (&iter, j_props);
   while (g_hash_table_iter_next (&iter, &key, &value)) {
     ppdebug("PROPERTY: key=%s value=%s ", key, value);
     if (g_str_has_prefix(key, "PreciPoint") 
@@ -1807,25 +1826,34 @@ static void gtif_add_properties(openslide_t *osr, GHashTable *hash_props) {
     {
       ppdebug("+gtif.prefix\n");
       g_hash_table_insert(osr->properties,
-                        g_strdup_printf("gtif.%s", key),
+                        g_strdup_printf("gtif.%s", (const char*)key),
                         g_strdup(value));
-    }
-    
+    }    
   }
   
-  if (g_hash_table_lookup(osr->properties, "gtif.objective-power")) {
-    _openslide_duplicate_int_prop(osr, "gtif.objective-power", OPENSLIDE_PROPERTY_NAME_OBJECTIVE_POWER);
-  } else if (g_hash_table_lookup(osr->properties, "gtif.magnification")) {
-    _openslide_duplicate_int_prop(osr, "gtif.magnification", OPENSLIDE_PROPERTY_NAME_OBJECTIVE_POWER);
+  char *prp = g_hash_table_lookup(j_props, "objectivepower");
+  if (!prp) g_hash_table_lookup(j_props, "objective-power");
+  if (!prp) g_hash_table_lookup(j_props, "magnification");
+  
+  if (prp) {
+    double o = _openslide_parse_double(prp);
+    g_hash_table_insert(osr->properties, 
+                g_strdup(OPENSLIDE_PROPERTY_NAME_OBJECTIVE_POWER), _openslide_format_double(o));    
   }
 
-  _openslide_duplicate_double_prop(osr, "gtif.mpp",
-                                   OPENSLIDE_PROPERTY_NAME_MPP_X);
-  _openslide_duplicate_double_prop(osr, "gtif.mpp",
-                                   OPENSLIDE_PROPERTY_NAME_MPP_Y);
+  prp = g_hash_table_lookup(j_props, "mpp");
+  if (prp) {
+    double o = _openslide_parse_double(prp);
+    g_hash_table_insert(osr->properties,
+                        g_strdup(OPENSLIDE_PROPERTY_NAME_MPP_X),
+                        _openslide_format_double(o));
+    g_hash_table_insert(osr->properties, 
+                        g_strdup(OPENSLIDE_PROPERTY_NAME_MPP_Y),
+                        _openslide_format_double(o));
+  }
 }
 
-
+/*
 static void propagate_missing_tile(void *key, void *value G_GNUC_UNUSED,
                                    void *data) {
   const int64_t *tile_no = key;
@@ -1851,6 +1879,7 @@ static void propagate_missing_tile(void *key, void *value G_GNUC_UNUSED,
   *next_tile_no = next_tile_row * next_tiffl->tiles_across + next_tile_col;
   g_hash_table_insert(next_l->missing_tiles, next_tile_no, NULL);
 }
+*/
 
 // check for OpenJPEG CVE-2013-6045 breakage
 // (see openslide-decode-jp2k.c)
@@ -1890,24 +1919,18 @@ static bool precipoint_gtif_open(openslide_t *osr,
   }
 
   /*
-   * http://www.aperio.com/documents/api/Aperio_Digital_Slides_and_Third-party_data_interchange.pdf
-   * page 14:
-   *
-   * The first image in an SVS file is always the baseline image (full
+   * The first image in a GTIF file is always the baseline image (full
    * resolution). This image is always tiled, usually with a tile size
-   * of 240 x 240 pixels. The second image is always a thumbnail,
-   * typically with dimensions of about 1024 x 768 pixels. Unlike the
-   * other slide images, the thumbnail image is always
-   * stripped. Following the thumbnail there may be one or more
-   * intermediate "pyramid" images. These are always compressed with
+   * of 256 x 256 pixels. 
+   * From there, we will have levels in descending order. 
+   * These are always compressed with
    * the same type of compression as the baseline image, and have a
    * tiled organization with the same tile size.
    *
-   * Optionally at the end of an SVS file there may be a slide label
-   * image, which is a low resolution picture taken of the slide’s
-   * label, and/or a macro camera image, which is a low resolution
-   * picture taken of the entire slide. The label and macro images are
-   * always stripped.
+   * Optionally at the end of an GTIF file there may be 
+   * "Associated Images", the name of which is in the ImageDescription tag. 
+   * If applicable, those names are "macro","thumbnail", or "label", 
+   * and they are always stripped.
    */
 
   do {
@@ -1986,20 +2009,28 @@ static bool precipoint_gtif_open(openslide_t *osr,
                     "Can't read compression scheme");
         goto FAIL;
       }
-
-      // some Aperio slides have some zero-length tiles, apparently due to
-      // an encoder bug
+      
+      // make a list of missing tiles, missing tiles may have size 0 or offset 0
       toff_t *tile_sizes;
       if (!TIFFGetField(tiff, TIFFTAG_TILEBYTECOUNTS, &tile_sizes)) {
         g_set_error(err, OPENSLIDE_ERROR, OPENSLIDE_ERROR_FAILED,
                     "Cannot get tile sizes");
         goto FAIL;
       }
-      l->missing_tiles = g_hash_table_new_full(g_int64_hash, g_int64_equal,
-                                               g_free, NULL);
+      
+      toff_t *tile_addrs;
+      if (!TIFFGetField(tiff, TIFFTAG_TILEOFFSETS, &tile_addrs)) {
+        g_set_error(err, OPENSLIDE_ERROR, OPENSLIDE_ERROR_FAILED,
+                    "Cannot get tile sizes");
+        goto FAIL;
+      }
+      
+      
+      l->missing_tiles = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, NULL);
+      
       for (ttile_t tile_no = 0;
            tile_no < tiffl->tiles_across * tiffl->tiles_down; tile_no++) {
-        if (tile_sizes[tile_no] == 0) {
+        if (tile_sizes[tile_no] == 0 || tile_addrs[tile_no] == 0) {
           int64_t *p_tile_no = g_new(int64_t, 1);
           *p_tile_no = tile_no;
           g_hash_table_insert(l->missing_tiles, p_tile_no, NULL);
@@ -2024,10 +2055,11 @@ static bool precipoint_gtif_open(openslide_t *osr,
 
   // tiles concatenating a missing tile are sometimes corrupt, so we mark
   // them missing too
+  /*
   for (i = 0; i < level_count - 1; i++) {
     g_hash_table_foreach(levels[i]->missing_tiles, propagate_missing_tile,
                          levels[i + 1]);
-  }
+  }*/
 
   // check for OpenJPEG CVE-2013-6045 breakage
   if (!test_tile_decoding(levels[0], tiff, err)) {
@@ -2055,7 +2087,8 @@ static bool precipoint_gtif_open(openslide_t *osr,
   }
 
   // parse JSON blob from ImageDescription tiff tag
-  GHashTable *j_props = g_hash_table_new_full(NULL, g_str_equal, g_free, g_free);
+  //GHashTable *j_props = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  GHashTable *j_props = g_hash_table_new(g_str_hash_nocase, g_str_equal_nocase);
   json_parse((const char**)&image_desc, NULL, j_props, err);
   gtif_add_properties(osr, j_props);
   g_hash_table_destroy(j_props);
