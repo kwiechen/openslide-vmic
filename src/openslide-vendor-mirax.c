@@ -420,12 +420,12 @@ static char *read_string_from_file(FILE *f, int len) {
   return str;
 }
 
-static bool read_le_int32_from_file_with_result(FILE *f, int32_t *OUT) {
-  if (fread(OUT, 4, 1, f) != 1) {
+static bool read_le_int32_from_file_with_result(FILE *f, int32_t *Out) {
+  if (fread(Out, 4, 1, f) != 1) {
     return false;
   }
 
-  *OUT = GINT32_FROM_LE(*OUT);
+  *Out = GINT32_FROM_LE(*Out);
   //  g_debug("%d", i);
 
   return true;

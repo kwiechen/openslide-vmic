@@ -534,7 +534,7 @@ static bool compute_mcu_start(openslide_t *osr,
   g_mutex_lock(data->restart_marker_mutex);
 
   if (!_compute_mcu_start(jpeg, f, tileno, err)) {
-    goto OUT;
+    goto Out;
   }
 
   // start of data stream
@@ -550,7 +550,7 @@ static bool compute_mcu_start(openslide_t *osr,
       *stop_position = jpeg->end_in_file;
     } else {
       if (!_compute_mcu_start(jpeg, f, tileno + 1, err)) {
-        goto OUT;
+        goto Out;
       }
       *stop_position = jpeg->mcu_starts[tileno + 1];
     }
@@ -559,7 +559,7 @@ static bool compute_mcu_start(openslide_t *osr,
 
   success = true;
 
-OUT:
+Out:
   g_mutex_unlock(data->restart_marker_mutex);
   return success;
 }
@@ -612,7 +612,7 @@ static bool read_from_jpeg(openslide_t *osr,
                                   &start_position,
                                   &stop_position,
                                   err)) {
-    goto OUT;
+    goto Out;
   }
 
   if (setjmp(env) == 0) {
@@ -626,13 +626,13 @@ static bool read_from_jpeg(openslide_t *osr,
                                 start_position,
                                 stop_position,
                                 err)) {
-      goto OUT;
+      goto Out;
     }
 
     if (jpeg_read_header(cinfo, true) != JPEG_HEADER_OK) {
       g_set_error(err, OPENSLIDE_ERROR, OPENSLIDE_ERROR_FAILED,
                   "Couldn't read JPEG header");
-      goto OUT;
+      goto Out;
     }
     cinfo->scale_num = 1;
     cinfo->scale_denom = scale_denom;
@@ -643,7 +643,7 @@ static bool read_from_jpeg(openslide_t *osr,
     //    g_debug("output_height: %d", cinfo->output_height);
 
     if (!_openslide_jpeg_decompress_run(dc, dest, false, w, h, err)) {
-      goto OUT;
+      goto Out;
     }
     success = true;
   } else {
@@ -651,7 +651,7 @@ static bool read_from_jpeg(openslide_t *osr,
     _openslide_jpeg_propagate_error(err, dc);
   }
 
-OUT:
+Out:
   _openslide_jpeg_decompress_destroy(dc);
   fclose(f);
   return success;

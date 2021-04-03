@@ -232,7 +232,7 @@ static bool parse_tileid(const char *tileid,
       g_str_has_suffix(tileid, "#")) {   // hash of a tile
     g_set_error(err, OPENSLIDE_ERROR, OPENSLIDE_ERROR_NO_VALUE,
                 "Not a tile ID");
-    goto OUT;
+    goto Out;
   }
 
   // parse and check fields
@@ -240,7 +240,7 @@ static bool parse_tileid(const char *tileid,
   if (g_strv_length(fields) != 6) {
     g_set_error(err, OPENSLIDE_ERROR, OPENSLIDE_ERROR_FAILED,
                 "Bad field count in tile ID %s", tileid);
-    goto OUT;
+    goto Out;
   }
   int64_t x, y, downsample, color, focal_plane;
   if (!_parse_tileid_column(tileid, fields[1], &x, err) ||
@@ -248,12 +248,12 @@ static bool parse_tileid(const char *tileid,
       !_parse_tileid_column(tileid, fields[3], &downsample, err) ||
       !_parse_tileid_column(tileid, fields[4], &color, err) ||
       !_parse_tileid_column(tileid, fields[5], &focal_plane, err)) {
-    goto OUT;
+    goto Out;
   }
   if (downsample < 1 || color >= NUM_INDEXES) {
     g_set_error(err, OPENSLIDE_ERROR, OPENSLIDE_ERROR_FAILED,
                 "Bad field value in tile ID %s", tileid);
-    goto OUT;
+    goto Out;
   }
 
   // verify round trip (no leading zeros, etc.)
@@ -261,7 +261,7 @@ static bool parse_tileid(const char *tileid,
   if (strcmp(tileid, synth_tileid)) {
     g_set_error(err, OPENSLIDE_ERROR, OPENSLIDE_ERROR_FAILED,
                 "Couldn't round-trip tile ID %s", tileid);
-    goto OUT;
+    goto Out;
   }
 
   // commit
@@ -282,7 +282,7 @@ static bool parse_tileid(const char *tileid,
   }
   success = true;
 
-OUT:
+Out:
   g_strfreev(fields);
   g_free(synth_tileid);
   return success;
@@ -332,15 +332,15 @@ static bool read_image(uint32_t *tiledata,
 
   if (!read_channel(red_channel, tile_col, tile_row, downsample,
                     INDEX_RED, focal_plane, tile_size, stmt, err)) {
-    goto OUT;
+    goto Out;
   }
   if (!read_channel(green_channel, tile_col, tile_row, downsample,
                     INDEX_GREEN, focal_plane, tile_size, stmt, err)) {
-    goto OUT;
+    goto Out;
   }
   if (!read_channel(blue_channel, tile_col, tile_row, downsample,
                     INDEX_BLUE, focal_plane, tile_size, stmt, err)) {
-    goto OUT;
+    goto Out;
   }
 
   for (int32_t i = 0; i < tile_size * tile_size; i++) {
@@ -352,7 +352,7 @@ static bool read_image(uint32_t *tiledata,
 
   success = true;
 
-OUT:
+Out:
   g_slice_free1(tile_size * tile_size, red_channel);
   g_slice_free1(tile_size * tile_size, green_channel);
   g_slice_free1(tile_size * tile_size, blue_channel);
